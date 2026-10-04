@@ -1,0 +1,8 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data   # 持久化 SQLite 数据库与上传的扫描图
+    restart: unless-stopped
