@@ -722,16 +722,18 @@ def edge_decision_upsert(id1, id2):
         raise ApiError("该端点对不满足距离与夹角条件, 无法记录决定")
 
     db = get_db()
+    # 提交前先按当前仿射校正与容差重算旧决定(与打开接边视图一致),
+    # 避免控制点移动后旧的有效接受决定未及时转待复核而造成依赖查看顺序的误报。
+    fresh_rows, _ = _sync_decisions(db, id_a, id_b, geo)
     if decision == "accepted":
-        # 一对一: 任一端点已被接受为其他配对则冲突
-        clash = rows(
-            "SELECT ep_a, ep_b FROM edge_decisions "
-            "WHERE map_a_id=? AND map_b_id=? AND decision='accepted' "
-            "AND status='valid' AND (ep_a=? OR ep_b=?)",
-            (id_a, id_b, ep_a, ep_b))
-        clash = [k for k in ((r["ep_a"], r["ep_b"]) for r in clash)
-                 if k != key]
+        # 一对一: 任一端点已被"重算后仍有效"的接受配对占用则冲突
+        clash = [(r["ep_a"], r["ep_b"]) for r in fresh_rows
+                 if r["decision"] == "accepted" and r["status"] == "valid"
+                 and (r["ep_a"] == ep_a or r["ep_b"] == ep_b)
+                 and (r["ep_a"], r["ep_b"]) != key]
         if clash:
+            # 旧接受仍有效且共享端点: 回滚本次重算, 不写入任何状态翻转或冲突决定
+            db.rollback()
             raise ApiError("与已接受的一对一配对冲突, 请先驳回原决定", 409)
 
     db.execute(
